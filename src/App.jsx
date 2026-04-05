@@ -39,26 +39,12 @@ async function pdfToImages(file, onProgress) {
     if (onProgress) onProgress(i, n)
     const page = await pdf.getPage(i)
     const base = page.getViewport({ scale: 1.0 })
-    const scale = Math.min(2.5, 4000 / Math.max(base.width, base.height))
+    const scale = Math.min(1.8, 3200 / Math.max(base.width, base.height))
     const vp = page.getViewport({ scale })
     const canvas = document.createElement('canvas')
     canvas.width = vp.width; canvas.height = vp.height
-    const ctx = canvas.getContext('2d')
-    ctx.fillStyle = 'white'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    await page.render({ canvasContext: ctx, viewport: vp }).promise
-    // Kontrast & parlaklık iyileştirme
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-    const data = imageData.data
-    const contrast = 1.6
-    const brightness = 15
-    for (let j = 0; j < data.length; j += 4) {
-      data[j]   = Math.min(255, Math.max(0, (data[j]   - 128) * contrast + 128 + brightness))
-      data[j+1] = Math.min(255, Math.max(0, (data[j+1] - 128) * contrast + 128 + brightness))
-      data[j+2] = Math.min(255, Math.max(0, (data[j+2] - 128) * contrast + 128 + brightness))
-    }
-    ctx.putImageData(imageData, 0, 0)
-    imgs.push(canvas.toDataURL('image/jpeg', 0.98).split(',')[1])
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise
+    imgs.push(canvas.toDataURL('image/jpeg', 0.93).split(',')[1])
   }
   return { imgs, numPages: n }
 }
@@ -145,17 +131,12 @@ async function extractFromBase64(base64, mediaType) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ base64, mediaType: mediaType || 'image/jpeg' })
-  const res = await fetch('/api/extract', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ base64, mediaType: mediaType || 'image/jpeg' })
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error?.message || 'API hatası')
   const txt = data.content.find(b=>b.type==='text')?.text || ''
   return JSON.parse(txt.replace(/```json|```/g,'').trim())
 }
-
 
 // ── data builders ─────────────────────────────────────────────
 function buildProducts(invoices) {
