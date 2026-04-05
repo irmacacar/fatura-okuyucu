@@ -141,8 +141,16 @@ async function downloadFromUrl(url, filename) {
 
 // ── API call (proxied through Vercel) ─────────────────────────
 async function extractFromBase64(base64, mediaType) {
-  const PROMPT = `Bu görüntüdeki faturayı analiz et. SADECE JSON yaz, başka hiçbir şey ekleme:
-{"supplier":"","supplier_phone":"telefon numarası veya null","supplier_address":"adres veya null","invoice_number":"","date":"GG.AA.YYYY","due_date":"GG.AA.YYYY veya null","currency":"TRY","subtotal":0,"vat_rate":18,"vat_amount":0,"total":0,"items":[{"description":"","quantity":1,"unit":"adet","unit_price":0,"vat_rate":18,"line_total":0}]}`
+  const res = await fetch('/api/extract', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ base64, mediaType: mediaType || 'image/jpeg' })
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data?.error?.message || 'API hatası')
+  const txt = data.content.find(b=>b.type==='text')?.text || ''
+  return JSON.parse(txt.replace(/```json|```/g,'').trim())
+}
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
