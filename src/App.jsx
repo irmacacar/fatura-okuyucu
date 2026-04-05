@@ -145,35 +145,16 @@ async function extractFromBase64(base64, mediaType) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ base64, mediaType: mediaType || 'image/jpeg' })
+  const res = await fetch('/api/extract', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ base64, mediaType: mediaType || 'image/jpeg' })
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error?.message || 'API hatası')
   const txt = data.content.find(b=>b.type==='text')?.text || ''
   return JSON.parse(txt.replace(/```json|```/g,'').trim())
 }
-
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': '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',
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      messages: [{ role: 'user', content: [
-        { type: 'image', source: { type: 'base64', media_type: mediaType || 'image/jpeg', data: base64 } },
-        { type: 'text', text: PROMPT }
-      ]}]
-    })
-  })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data?.error?.message || 'API hatası')
-  const txt = data.content.find(b=>b.type==='text')?.text || ''
-  return JSON.parse(txt.replace(/```json|```/g,'').trim())
-  
 
 
 // ── data builders ─────────────────────────────────────────────
