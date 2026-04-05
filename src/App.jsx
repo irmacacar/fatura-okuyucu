@@ -173,8 +173,8 @@ async function extractFromBase64(base64, mediaType) {
   if (!res.ok) throw new Error(data?.error?.message || 'API hatası')
   const txt = data.content.find(b=>b.type==='text')?.text || ''
   return JSON.parse(txt.replace(/```json|```/g,'').trim())
-  }
-}
+  
+
 
 // ── data builders ─────────────────────────────────────────────
 function buildProducts(invoices) {
