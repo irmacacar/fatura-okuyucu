@@ -144,7 +144,23 @@ async function compressBase64(base64, maxKB=2800) {
     img.src = `data:image/jpeg;base64,${base64}`
   })
 }
-
+async function compressBase64(base64, maxKB=2800) {
+  return new Promise(res => {
+    const img = new Image()
+    img.onload = () => {
+      const bytes = (base64.length * 3) / 4
+      const scale = bytes > maxKB * 1024 ? Math.sqrt((maxKB * 1024) / bytes) : 1
+      const c = document.createElement('canvas')
+      c.width = Math.round(img.width * scale)
+      c.height = Math.round(img.height * scale)
+      const ctx = c.getContext('2d')
+      ctx.fillStyle = 'white'; ctx.fillRect(0, 0, c.width, c.height)
+      ctx.drawImage(img, 0, 0, c.width, c.height)
+      res(c.toDataURL('image/jpeg', 0.85).split(',')[1])
+    }
+    img.src = `data:image/jpeg;base64,${base64}`
+  })
+}
 // ── API call (proxied through Vercel) ─────────────────────────
 async function extractFromBase64(base64, mediaType) {
   const compressed = await compressBase64(base64)
@@ -337,28 +353,26 @@ export default function App() {
       if (!isImg&&!isPdf) { errs.push(`${file.name}: Desteklenmeyen format`); continue }
 
       if (isPdf) {
-        let imgs, numPages
-        try {
-          setProgress({file:file.name,step:0,total:0,phase:'split'})
-          ;({imgs,numPages} = await pdfToImages(file,(c,t)=>setProgress({file:file.name,step:c,total:t,phase:'split'})))
-        } catch(e) { errs.push(`${file.name}: PDF açılamadı — ${e.message}`); continue }
-
-        for (let i=0; i<imgs.length; i++) {
-          setProgress({file:file.name,step:i+1,total:numPages,phase:'extract'})
-          const id   = crypto.randomUUID()
-          const thumb = await createThumbnail(imgs[i])
-          const fname = numPages>1 ? `${file.name.replace(/\.pdf$/i,'')}_sayfa${i+1}.jpg` : file.name.replace(/\.pdf$/i,'.jpg')
-          const label = numPages>1 ? `${file.name}  ·  sayfa ${i+1}/${numPages}` : file.name
-          try {
-            const [fullUrl, thumbUrl] = await Promise.all([
-              uploadImage(imgs[i], `${id}_full.jpg`),
-              thumb ? uploadImage(thumb, `${id}_thumb.jpg`) : Promise.resolve(null)
-            ])
-            const data = await extractFromBase64(imgs[i], 'image/jpeg')
-            await supabase.from('invoices').insert({ id, data, file_name:label, image_path:`${id}_full.jpg`, thumb_path:thumb?`${id}_thumb.jpg`:null })
-            setInvoices(prev=>[...prev,{...data,_id:id,_file:label,_fullUrl:fullUrl,_thumbUrl:thumbUrl}])
-          } catch(e) { errs.push(`${file.name} sayfa ${i+1}: ${e.message}`) }
-        }
+  setProgress({file:file.name, step:1, total:1, phase:'extract'})
+  const id = crypto.randomUUID()
+  try {
+    const buf = await file.arrayBuffer()
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
+    const [fullUrl] = await Promise.all([
+      uploadImage(b64, `${id}_full.jpg`),
+    ])
+    const res = await fetch('/api/extract', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base64: b64, mediaType: 'application/pdf', isPdf: true })
+    })
+    const apiData = await res.json()
+    if (!res.ok) throw new Error(apiData?.error?.message || 'API hatası')
+    const txt = apiData.content.find(b=>b.type==='text')?.text || ''
+    const data = JSON.parse(txt.replace(/```json|```/g,'').trim())
+    await supabase.from('invoices').insert({ id, data, file_name:file.name, image_path:`${id}_full.jpg`, thumb_path:null })
+    setInvoices(prev=>[...prev,{...data,_id:id,_file:file.name,_fullUrl:fullUrl,_thumbUrl:null}])
+  } catch(e) { errs.push(`${file.name}: ${e.message}`) }
       } else {
         setProgress({file:file.name,step:1,total:1,phase:'extract'})
         const id = crypto.randomUUID()
