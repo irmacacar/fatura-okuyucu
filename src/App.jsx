@@ -125,12 +125,33 @@ async function downloadFromUrl(url, filename) {
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000)
 }
 
+// ── Compress base64 image to stay under Vercel 4.5MB limit ───
+async function compressBase64(base64, maxKB=2800) {
+  return new Promise(res => {
+    const img = new Image()
+    img.onload = () => {
+      let scale = 1
+      const bytes = (base64.length * 3) / 4
+      if (bytes > maxKB * 1024) scale = Math.sqrt((maxKB * 1024) / bytes)
+      const c = document.createElement('canvas')
+      c.width = Math.round(img.width * scale)
+      c.height = Math.round(img.height * scale)
+      const ctx = c.getContext('2d')
+      ctx.fillStyle = 'white'; ctx.fillRect(0, 0, c.width, c.height)
+      ctx.drawImage(img, 0, 0, c.width, c.height)
+      res(c.toDataURL('image/jpeg', 0.85).split(',')[1])
+    }
+    img.src = `data:image/jpeg;base64,${base64}`
+  })
+}
+
 // ── API call (proxied through Vercel) ─────────────────────────
 async function extractFromBase64(base64, mediaType) {
+  const compressed = await compressBase64(base64)
   const res = await fetch('/api/extract', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ base64, mediaType: mediaType || 'image/jpeg' })
+    body: JSON.stringify({ base64: compressed, mediaType: 'image/jpeg' })
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error?.message || 'API hatası')
