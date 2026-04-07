@@ -192,6 +192,20 @@ async function extractFromImages(imagesB64) {
   return parseExtractResponse(data)
 }
 
+async function extractFromPdfDual(pdfB64, imagesB64) {
+  const res = await fetch('/api/extract', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      pdfBase64: pdfB64,
+      images: imagesB64.map(d => ({ data: d, mediaType: 'image/jpeg' }))
+    })
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data?.error?.message || 'API hatası')
+  return parseExtractResponse(data)
+}
+
 // ── data builders ─────────────────────────────────────────────
 function buildProducts(invoices) {
   const map = {}
@@ -373,17 +387,18 @@ export default function App() {
         setProgress({file:file.name, step:1, total:1, phase:'extract'})
         const id = crypto.randomUUID()
         try {
-          // PDF -> yüksek DPI sayfa görselleri (OCR kalitesi için)
+          // PDF'i hem native document hem de yüksek DPI görsel olarak gönder (dual input)
+          const buf = await file.arrayBuffer()
+          const pdfB64 = arrayBufferToBase64(buf)
           const { imgs: pageImages } = await pdfToImages(file)
           if (!pageImages.length) throw new Error('PDF sayfa içermiyor')
-          // Birinci sayfayı görüntü olarak Supabase'e yükle (önizleme için)
           const firstPageB64 = pageImages[0]
           const thumb = await createThumbnail(firstPageB64)
           const [fullUrl, thumbUrl] = await Promise.all([
             uploadImage(firstPageB64, `${id}_full.jpg`),
             thumb ? uploadImage(thumb, `${id}_thumb.jpg`) : Promise.resolve(null)
           ])
-          const data = await extractFromImages(pageImages)
+          const data = await extractFromPdfDual(pdfB64, pageImages)
           await supabase.from('invoices').insert({ id, data, file_name:file.name, image_path:`${id}_full.jpg`, thumb_path:thumb?`${id}_thumb.jpg`:null })
           setInvoices(prev=>[...prev,{...data,_id:id,_file:file.name,_fullUrl:fullUrl,_thumbUrl:thumbUrl}])
         } catch(e) { errs.push(`${file.name}: ${e.message}`) }
