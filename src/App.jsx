@@ -104,6 +104,16 @@ function initials(name) {
 // ── Supabase Storage helpers ──────────────────────────────────
 const BUCKET = 'fatura-images'
 
+function arrayBufferToBase64(buf) {
+  const bytes = new Uint8Array(buf)
+  let binary = ''
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk))
+  }
+  return btoa(binary)
+}
+
 function b64ToBlob(base64) {
   const bytes = atob(base64)
   const arr = new Uint8Array(bytes.length)
@@ -340,7 +350,7 @@ export default function App() {
   const id = crypto.randomUUID()
   try {
     const buf = await file.arrayBuffer()
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
+    const b64 = arrayBufferToBase64(buf)
     const [fullUrl] = await Promise.all([
       uploadImage(b64, `${id}_full.jpg`),
     ])
