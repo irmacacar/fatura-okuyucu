@@ -144,23 +144,6 @@ async function compressBase64(base64, maxKB=2800) {
     img.src = `data:image/jpeg;base64,${base64}`
   })
 }
-async function compressBase64(base64, maxKB=2800) {
-  return new Promise(res => {
-    const img = new Image()
-    img.onload = () => {
-      const bytes = (base64.length * 3) / 4
-      const scale = bytes > maxKB * 1024 ? Math.sqrt((maxKB * 1024) / bytes) : 1
-      const c = document.createElement('canvas')
-      c.width = Math.round(img.width * scale)
-      c.height = Math.round(img.height * scale)
-      const ctx = c.getContext('2d')
-      ctx.fillStyle = 'white'; ctx.fillRect(0, 0, c.width, c.height)
-      ctx.drawImage(img, 0, 0, c.width, c.height)
-      res(c.toDataURL('image/jpeg', 0.85).split(',')[1])
-    }
-    img.src = `data:image/jpeg;base64,${base64}`
-  })
-}
 // ── API call (proxied through Vercel) ─────────────────────────
 async function extractFromBase64(base64, mediaType) {
   const compressed = await compressBase64(base64)
