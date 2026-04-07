@@ -39,7 +39,7 @@ async function pdfToImages(file, onProgress) {
     if (onProgress) onProgress(i, n)
     const page = await pdf.getPage(i)
     const base = page.getViewport({ scale: 1.0 })
-    const scale = Math.min(1.8, 3200 / Math.max(base.width, base.height))
+    const scale = Math.min(3.0, 4000 / Math.max(base.width, base.height))
     const vp = page.getViewport({ scale })
     const canvas = document.createElement('canvas')
     canvas.width = vp.width; canvas.height = vp.height
@@ -154,6 +154,20 @@ async function compressBase64(base64, maxKB=2800) {
     img.src = `data:image/jpeg;base64,${base64}`
   })
 }
+// ── Anthropic content -> JSON parse + hata kontrolü ──────────
+function parseExtractResponse(data) {
+  if (data.stop_reason === 'max_tokens') {
+    throw new Error('Yanıt çok uzun, kesildi (max_tokens). Daha küçük bir fişle deneyin veya destek ile iletişime geçin.')
+  }
+  const txt = (data.content || []).find(b => b.type === 'text')?.text || ''
+  const cleaned = txt.replace(/```json|```/g, '').trim()
+  try {
+    return JSON.parse(cleaned)
+  } catch (e) {
+    throw new Error('Model yanıtı geçerli JSON değil. Fişin tamamı görünmüyor olabilir.')
+  }
+}
+
 // ── API call (proxied through Vercel) ─────────────────────────
 async function extractFromBase64(base64, mediaType) {
   const compressed = await compressBase64(base64)
@@ -164,8 +178,18 @@ async function extractFromBase64(base64, mediaType) {
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error?.message || 'API hatası')
-  const txt = data.content.find(b=>b.type==='text')?.text || ''
-  return JSON.parse(txt.replace(/```json|```/g,'').trim())
+  return parseExtractResponse(data)
+}
+
+async function extractFromImages(imagesB64) {
+  const res = await fetch('/api/extract', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ images: imagesB64.map(d => ({ data: d, mediaType: 'image/jpeg' })) })
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data?.error?.message || 'API hatası')
+  return parseExtractResponse(data)
 }
 
 // ── data builders ─────────────────────────────────────────────
@@ -346,26 +370,23 @@ export default function App() {
       if (!isImg&&!isPdf) { errs.push(`${file.name}: Desteklenmeyen format`); continue }
 
       if (isPdf) {
-  setProgress({file:file.name, step:1, total:1, phase:'extract'})
-  const id = crypto.randomUUID()
-  try {
-    const buf = await file.arrayBuffer()
-    const b64 = arrayBufferToBase64(buf)
-    const [fullUrl] = await Promise.all([
-      uploadImage(b64, `${id}_full.jpg`),
-    ])
-    const res = await fetch('/api/extract', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ base64: b64, mediaType: 'application/pdf', isPdf: true })
-    })
-    const apiData = await res.json()
-    if (!res.ok) throw new Error(apiData?.error?.message || 'API hatası')
-    const txt = apiData.content.find(b=>b.type==='text')?.text || ''
-    const data = JSON.parse(txt.replace(/```json|```/g,'').trim())
-    await supabase.from('invoices').insert({ id, data, file_name:file.name, image_path:`${id}_full.jpg`, thumb_path:null })
-    setInvoices(prev=>[...prev,{...data,_id:id,_file:file.name,_fullUrl:fullUrl,_thumbUrl:null}])
-  } catch(e) { errs.push(`${file.name}: ${e.message}`) }
+        setProgress({file:file.name, step:1, total:1, phase:'extract'})
+        const id = crypto.randomUUID()
+        try {
+          // PDF -> yüksek DPI sayfa görselleri (OCR kalitesi için)
+          const { imgs: pageImages } = await pdfToImages(file)
+          if (!pageImages.length) throw new Error('PDF sayfa içermiyor')
+          // Birinci sayfayı görüntü olarak Supabase'e yükle (önizleme için)
+          const firstPageB64 = pageImages[0]
+          const thumb = await createThumbnail(firstPageB64)
+          const [fullUrl, thumbUrl] = await Promise.all([
+            uploadImage(firstPageB64, `${id}_full.jpg`),
+            thumb ? uploadImage(thumb, `${id}_thumb.jpg`) : Promise.resolve(null)
+          ])
+          const data = await extractFromImages(pageImages)
+          await supabase.from('invoices').insert({ id, data, file_name:file.name, image_path:`${id}_full.jpg`, thumb_path:thumb?`${id}_thumb.jpg`:null })
+          setInvoices(prev=>[...prev,{...data,_id:id,_file:file.name,_fullUrl:fullUrl,_thumbUrl:thumbUrl}])
+        } catch(e) { errs.push(`${file.name}: ${e.message}`) }
       } else {
         setProgress({file:file.name,step:1,total:1,phase:'extract'})
         const id = crypto.randomUUID()
