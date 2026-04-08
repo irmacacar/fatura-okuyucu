@@ -168,9 +168,11 @@ function parseExtractResponse(data) {
   }
 }
 
-// Vercel body limit: 4.5MB. Güvenli üst sınır (JSON overhead için).
-const MAX_PAYLOAD_BYTES = 3.8 * 1024 * 1024
-const b64Bytes = (s) => Math.ceil((s?.length || 0) * 3 / 4)
+// Vercel body limit: 4.5MB. Base64 string olarak gönderildiği için karakter
+// sayısı ≈ JSON bytes. JSON overhead + key alanları için güvenli pay bırak.
+const MAX_PAYLOAD_BYTES = 3.5 * 1024 * 1024
+// JSON body'sinde gönderilen base64 STRING'in byte boyutu (ASCII).
+const b64StrSize = (s) => (s?.length || 0)
 
 async function postExtract(payload) {
   const res = await fetch('/api/extract', {
@@ -203,28 +205,29 @@ async function extractFromImages(imagesB64) {
 
 // PDF için akıllı strateji: dual (PDF + image) en iyi okuma; sığmazsa fallback.
 async function extractFromPdfDual(pdfB64, imagesB64) {
-  const pdfBytes = b64Bytes(pdfB64)
-  const imgBytes = imagesB64.reduce((a, d) => a + b64Bytes(d), 0)
+  const pdfSize = b64StrSize(pdfB64)
+  const imgSize = imagesB64.reduce((a, d) => a + b64StrSize(d), 0)
   // 1) Dual sığıyor mu?
-  if (pdfBytes + imgBytes < MAX_PAYLOAD_BYTES) {
+  if (pdfSize + imgSize < MAX_PAYLOAD_BYTES) {
     return postExtract({ pdfBase64: pdfB64, images: imagesB64.map(d => ({ data: d, mediaType: 'image/jpeg' })) })
   }
   // 2) Sadece PDF document mode (Anthropic native PDF, genelde yeterli)
-  if (pdfBytes < MAX_PAYLOAD_BYTES) {
+  if (pdfSize < MAX_PAYLOAD_BYTES) {
     return postExtract({ pdfBase64: pdfB64 })
   }
-  // 3) PDF de büyükse, sadece görseller (gerekirse daha agresif sıkıştır)
+  // 3) PDF de büyükse → görselleri agresif sıkıştırarak gönder
   let imgs = imagesB64
-  let total = imgs.reduce((a, d) => a + b64Bytes(d), 0)
+  let total = imgs.reduce((a, d) => a + b64StrSize(d), 0)
   if (total >= MAX_PAYLOAD_BYTES) {
-    // Her sayfayı yeniden sıkıştır
+    // Her sayfayı sayfa başına ~1.5MB binary'e (~2MB string) düşür
+    const perPageKB = Math.floor(((MAX_PAYLOAD_BYTES * 0.75) / imgs.length) / 1024) - 100
     const compressed = []
-    for (const d of imgs) compressed.push(await compressBase64(d, 1800))
+    for (const d of imgs) compressed.push(await compressBase64(d, Math.max(800, perPageKB)))
     imgs = compressed
-    total = imgs.reduce((a, d) => a + b64Bytes(d), 0)
+    total = imgs.reduce((a, d) => a + b64StrSize(d), 0)
   }
   if (total >= MAX_PAYLOAD_BYTES) {
-    throw new Error('Dosya çok büyük, sıkıştırılsa bile sınıra sığmıyor. Lütfen daha küçük bir taramayla deneyin.')
+    throw new Error('Dosya çok büyük, sıkıştırılsa bile sınıra sığmıyor. Lütfen daha küçük çözünürlüklü bir taramayla deneyin.')
   }
   return postExtract({ images: imgs.map(d => ({ data: d, mediaType: 'image/jpeg' })) })
 }
