@@ -168,42 +168,65 @@ function parseExtractResponse(data) {
   }
 }
 
+// Vercel body limit: 4.5MB. Güvenli üst sınır (JSON overhead için).
+const MAX_PAYLOAD_BYTES = 3.8 * 1024 * 1024
+const b64Bytes = (s) => Math.ceil((s?.length || 0) * 3 / 4)
+
+async function postExtract(payload) {
+  const res = await fetch('/api/extract', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  // Önce text olarak oku, JSON değilse anlamlı hata
+  const raw = await res.text()
+  let data
+  try { data = JSON.parse(raw) } catch {
+    if (res.status === 413 || /too large|request entity/i.test(raw)) {
+      throw new Error('Dosya çok büyük (Vercel 4.5MB sınırı). Lütfen daha küçük bir taramayla deneyin.')
+    }
+    throw new Error(`Sunucu hatası (HTTP ${res.status}): ${raw.slice(0, 120)}`)
+  }
+  if (!res.ok) throw new Error(data?.error?.message || `API hatası (HTTP ${res.status})`)
+  return parseExtractResponse(data)
+}
+
 // ── API call (proxied through Vercel) ─────────────────────────
 async function extractFromBase64(base64, mediaType) {
   const compressed = await compressBase64(base64)
-  const res = await fetch('/api/extract', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ base64: compressed, mediaType: 'image/jpeg' })
-  })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data?.error?.message || 'API hatası')
-  return parseExtractResponse(data)
+  return postExtract({ base64: compressed, mediaType: 'image/jpeg' })
 }
 
 async function extractFromImages(imagesB64) {
-  const res = await fetch('/api/extract', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ images: imagesB64.map(d => ({ data: d, mediaType: 'image/jpeg' })) })
-  })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data?.error?.message || 'API hatası')
-  return parseExtractResponse(data)
+  return postExtract({ images: imagesB64.map(d => ({ data: d, mediaType: 'image/jpeg' })) })
 }
 
+// PDF için akıllı strateji: dual (PDF + image) en iyi okuma; sığmazsa fallback.
 async function extractFromPdfDual(pdfB64, imagesB64) {
-  const res = await fetch('/api/extract', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      pdfBase64: pdfB64,
-      images: imagesB64.map(d => ({ data: d, mediaType: 'image/jpeg' }))
-    })
-  })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data?.error?.message || 'API hatası')
-  return parseExtractResponse(data)
+  const pdfBytes = b64Bytes(pdfB64)
+  const imgBytes = imagesB64.reduce((a, d) => a + b64Bytes(d), 0)
+  // 1) Dual sığıyor mu?
+  if (pdfBytes + imgBytes < MAX_PAYLOAD_BYTES) {
+    return postExtract({ pdfBase64: pdfB64, images: imagesB64.map(d => ({ data: d, mediaType: 'image/jpeg' })) })
+  }
+  // 2) Sadece PDF document mode (Anthropic native PDF, genelde yeterli)
+  if (pdfBytes < MAX_PAYLOAD_BYTES) {
+    return postExtract({ pdfBase64: pdfB64 })
+  }
+  // 3) PDF de büyükse, sadece görseller (gerekirse daha agresif sıkıştır)
+  let imgs = imagesB64
+  let total = imgs.reduce((a, d) => a + b64Bytes(d), 0)
+  if (total >= MAX_PAYLOAD_BYTES) {
+    // Her sayfayı yeniden sıkıştır
+    const compressed = []
+    for (const d of imgs) compressed.push(await compressBase64(d, 1800))
+    imgs = compressed
+    total = imgs.reduce((a, d) => a + b64Bytes(d), 0)
+  }
+  if (total >= MAX_PAYLOAD_BYTES) {
+    throw new Error('Dosya çok büyük, sıkıştırılsa bile sınıra sığmıyor. Lütfen daha küçük bir taramayla deneyin.')
+  }
+  return postExtract({ images: imgs.map(d => ({ data: d, mediaType: 'image/jpeg' })) })
 }
 
 // ── data builders ─────────────────────────────────────────────
