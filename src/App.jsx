@@ -359,11 +359,12 @@ export default function App() {
   const products   = useMemo(() => buildProducts(filtInv), [filtInv])
   const suppliers  = useMemo(() => buildSuppliers(filtInv), [filtInv])
 
+  // Vadeler: ay filtresinden bağımsız — tüm bekleyen vadeleri göster (gecikmiş + yaklaşan).
+  // Ay filtresi burada kullanıcıyı kendi faturalarını "kaybediyormuş" hissine sokuyordu.
   const dueInv = useMemo(() => {
     const u = invoices.filter(inv=>inv.due_date&&!paidMap[inv._id])
-    const f = month==='all'?u:u.filter(inv=>toMonthKey(inv.due_date)===month)
-    return f.sort((a,b)=>{const da=parseDate(a.due_date),db=parseDate(b.due_date);if(!da&&!db)return 0;if(!da)return 1;if(!db)return -1;return da-db})
-  }, [invoices,paidMap,month])
+    return u.sort((a,b)=>{const da=parseDate(a.due_date),db=parseDate(b.due_date);if(!da&&!db)return 0;if(!da)return 1;if(!db)return -1;return da-db})
+  }, [invoices,paidMap])
 
   const paidInv = useMemo(() => {
     const p = invoices.filter(inv=>paidMap[inv._id])
