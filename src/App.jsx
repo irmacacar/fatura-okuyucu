@@ -309,6 +309,9 @@ export default function App() {
   const [lightbox, setLightbox]            = useState(null)
   const [searchFat, setSearchFat]          = useState('')
   const [searchProd, setSearchProd]        = useState('')
+  const [editing, setEditing]              = useState(false)
+  const [editItems, setEditItems]          = useState([])
+  const [editHeader, setEditHeader]        = useState({})
   const inputRef = useRef()
 
   // ── Auth ────────────────────────────────────────────────────
@@ -465,8 +468,75 @@ export default function App() {
       supabase.storage.from(BUCKET).remove([`${id}_full.jpg`,`${id}_thumb.jpg`])
     ])
     setInvoices(p=>p.filter(i=>i._id!==id))
-    if (selected?._id===id) setSelected(null)
+    if (selected?._id===id) { setSelected(null); setEditing(false) }
   }, [selected])
+
+  const startEdit = useCallback(() => {
+    if (!selected) return
+    setEditItems((selected.items||[]).map(it=>({...it})))
+    setEditHeader({ supplier:selected.supplier||'', supplier_phone:selected.supplier_phone||'', supplier_address:selected.supplier_address||'', invoice_number:selected.invoice_number||'', date:selected.date||'', due_date:selected.due_date||'', currency:selected.currency||'TRY' })
+    setEditing(true)
+  }, [selected])
+
+  const cancelEdit = useCallback(() => { setEditing(false); setEditItems([]); setEditHeader({}) }, [])
+
+  const updateEditItem = useCallback((idx, field, value) => {
+    setEditItems(prev => {
+      const next = prev.map((it,i) => i!==idx ? it : {...it, [field]: value})
+      // quantity veya unit_price değişince line_total otomatik hesapla
+      if (field==='quantity'||field==='unit_price') {
+        const it = next[idx]
+        next[idx] = { ...it, line_total: Math.round((Number(it.quantity)||0) * (Number(it.unit_price)||0) * 100) / 100 }
+      }
+      return next
+    })
+  }, [])
+
+  const removeEditItem = useCallback((idx) => {
+    setEditItems(prev => prev.filter((_,i)=>i!==idx))
+  }, [])
+
+  const addEditItem = useCallback(() => {
+    setEditItems(prev => [...prev, { description:'', quantity:1, unit:'adet', unit_price:0, vat_rate:0, line_total:0 }])
+  }, [])
+
+  const saveEdit = useCallback(async () => {
+    if (!selected) return
+    const subtotal = editItems.reduce((s,it) => s + (Number(it.line_total)||0), 0)
+    const vatAmount = editItems.reduce((s,it) => s + ((Number(it.line_total)||0) * (Number(it.vat_rate)||0) / 100), 0)
+    const total = Math.round((subtotal + vatAmount) * 100) / 100
+
+    const newData = {
+      supplier: editHeader.supplier,
+      supplier_phone: editHeader.supplier_phone || null,
+      supplier_address: editHeader.supplier_address || null,
+      invoice_number: editHeader.invoice_number,
+      date: editHeader.date,
+      due_date: editHeader.due_date || null,
+      currency: editHeader.currency || 'TRY',
+      subtotal: Math.round(subtotal * 100) / 100,
+      vat_rate: editItems.length ? (Number(editItems[0].vat_rate)||0) : 0,
+      vat_amount: Math.round(vatAmount * 100) / 100,
+      total,
+      items: editItems.map(it => ({
+        description: it.description,
+        quantity: Number(it.quantity)||0,
+        unit: it.unit||'adet',
+        unit_price: Number(it.unit_price)||0,
+        vat_rate: Number(it.vat_rate)||0,
+        line_total: Number(it.line_total)||0,
+      })),
+    }
+
+    await supabase.from('invoices').update({ data: newData }).eq('id', selected._id)
+
+    const updated = { ...newData, _id:selected._id, _file:selected._file, _fullUrl:selected._fullUrl, _thumbUrl:selected._thumbUrl }
+    setInvoices(prev => prev.map(inv => inv._id===selected._id ? updated : inv))
+    setSelected(updated)
+    setEditing(false)
+    setEditItems([])
+    setEditHeader({})
+  }, [selected, editItems, editHeader])
 
   const exportXlsx = useCallback(() => {
     const wb = XLSX.utils.book_new(), src = filtInv
@@ -596,7 +666,7 @@ export default function App() {
                     <div onClick={()=>inv._fullUrl&&setLightbox({url:inv._fullUrl,filename:inv._file})} style={{flexShrink:0,width:38,height:52,borderRadius:4,border:`1px solid ${C.border}`,overflow:'hidden',background:C.surfaceAlt,display:'flex',alignItems:'center',justifyContent:'center',cursor:inv._thumbUrl?'pointer':'default'}}>
                       {inv._thumbUrl ? <img src={inv._thumbUrl} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/> : <span style={{fontSize:14,opacity:0.25}}>📄</span>}
                     </div>
-                    <div onClick={()=>setSelected(inv)} style={{flex:1,minWidth:0,cursor:'pointer'}}>
+                    <div onClick={()=>{setSelected(inv);setEditing(false)}} style={{flex:1,minWidth:0,cursor:'pointer'}}>
                       <div style={{color:C.text,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:13}}>{inv.supplier||'—'}</div>
                       <div style={{color:C.textMuted,fontSize:11,marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{inv.invoice_number||'—'} · {inv.date||'—'}</div>
                     </div>
@@ -614,18 +684,32 @@ export default function App() {
               <div style={{overflowY:'auto',padding:26}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:22}}>
                   <div>
-                    <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:19}}>{selected.supplier||'—'}</div>
+                    {editing
+                      ? <input value={editHeader.supplier||''} onChange={e=>setEditHeader(h=>({...h,supplier:e.target.value}))} style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:19,background:C.surfaceAlt,color:C.text,border:`1px solid ${C.border}`,borderRadius:5,padding:'4px 8px',width:320}} placeholder="Tedarikçi"/>
+                      : <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:19}}>{selected.supplier||'—'}</div>
+                    }
                     <div style={{color:C.textMuted,fontSize:12,marginTop:3}}>{selected._file}</div>
                   </div>
                   <div style={{textAlign:'right'}}>
-                    <div style={{fontSize:21,fontWeight:500,color:C.accent}}>{fmt(selected.total)} {selected.currency||'TRY'}</div>
+                    <div style={{fontSize:21,fontWeight:500,color:C.accent}}>{editing ? fmt(editItems.reduce((s,it)=>s+(Number(it.line_total)||0),0) + editItems.reduce((s,it)=>s+((Number(it.line_total)||0)*(Number(it.vat_rate)||0)/100),0)) : fmt(selected.total)} {(editing?editHeader.currency:selected.currency)||'TRY'}</div>
                     <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>Genel Toplam</div>
                   </div>
                 </div>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:9,marginBottom:20}}>
-                  {[['Fatura No',selected.invoice_number],['Tarih',selected.date],['Vade',selected.due_date],['KDV',selected.vat_rate!=null?`%${selected.vat_rate}`:null]].map(([l,v])=>(
-                    <div key={l} style={{background:C.surface,borderRadius:7,padding:'9px 11px',border:`1px solid ${C.border}`}}><div style={{color:C.textMuted,fontSize:10,marginBottom:4}}>{l}</div><div style={{color:C.text,fontWeight:500}}>{v||'—'}</div></div>
-                  ))}
+                  {editing ? (
+                    <>
+                      {[['Fatura No','invoice_number'],['Tarih','date'],['Vade','due_date'],['Para Birimi','currency']].map(([l,k])=>(
+                        <div key={k} style={{background:C.surface,borderRadius:7,padding:'9px 11px',border:`1px solid ${C.border}`}}>
+                          <div style={{color:C.textMuted,fontSize:10,marginBottom:4}}>{l}</div>
+                          <input value={editHeader[k]||''} onChange={e=>setEditHeader(h=>({...h,[k]:e.target.value}))} style={{background:C.surfaceAlt,color:C.text,border:`1px solid ${C.border}`,borderRadius:4,padding:'3px 6px',width:'100%',fontFamily:"'DM Mono',monospace",fontSize:13,boxSizing:'border-box'}} placeholder={l}/>
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    [['Fatura No',selected.invoice_number],['Tarih',selected.date],['Vade',selected.due_date],['KDV',selected.vat_rate!=null?`%${selected.vat_rate}`:null]].map(([l,v])=>(
+                      <div key={l} style={{background:C.surface,borderRadius:7,padding:'9px 11px',border:`1px solid ${C.border}`}}><div style={{color:C.textMuted,fontSize:10,marginBottom:4}}>{l}</div><div style={{color:C.text,fontWeight:500}}>{v||'—'}</div></div>
+                    ))
+                  )}
                 </div>
                 <div style={{display:'flex',gap:4,marginBottom:14,borderBottom:`1px solid ${C.border}`,paddingBottom:12}}>
                   {[['ozet','Özet'],['detay','Kalem Detayı']].map(([k,l])=>(
@@ -643,13 +727,42 @@ export default function App() {
                   </div>
                 )}
                 {dTab==='detay'&&(
-                  <div style={{background:C.surface,borderRadius:9,border:`1px solid ${C.border}`,overflow:'hidden'}}>
-                    <table style={{width:'100%',borderCollapse:'collapse'}}>
-                      <thead><tr>{['Ürün/Hizmet','Miktar','Birim','Birim Fiyat','KDV%','Toplam'].map(h=><th key={h} style={TH}>{h}</th>)}</tr></thead>
-                      <tbody>{(selected.items||[]).map((item,i)=>(
-                        <tr key={i}><td style={{...TD,color:C.text,fontWeight:500}}>{item.description||'—'}</td><td style={{...TD,color:C.textMuted}}>{item.quantity??''}</td><td style={{...TD,color:C.textMuted}}>{item.unit||''}</td><td style={TD}>{fmt(item.unit_price)}</td><td style={{...TD,color:C.textMuted}}>%{item.vat_rate??''}</td><td style={{...TD,color:C.accent,fontWeight:500}}>{fmt(item.line_total)}</td></tr>
-                      ))}</tbody>
-                    </table>
+                  <div>
+                    <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginBottom:10}}>
+                      {!editing ? (
+                        <button onClick={startEdit} style={{background:'transparent',color:C.accent,border:`1px solid ${C.accent}`,borderRadius:6,padding:'5px 14px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:500}}>Düzenle</button>
+                      ) : (
+                        <>
+                          <button onClick={cancelEdit} style={{background:'transparent',color:C.textMuted,border:`1px solid ${C.border}`,borderRadius:6,padding:'5px 14px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12}}>İptal</button>
+                          <button onClick={saveEdit} style={{background:C.accent,color:'#0f0f0f',border:'none',borderRadius:6,padding:'5px 14px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:600}}>Kaydet</button>
+                        </>
+                      )}
+                    </div>
+                    <div style={{background:C.surface,borderRadius:9,border:`1px solid ${C.border}`,overflow:'hidden'}}>
+                      <table style={{width:'100%',borderCollapse:'collapse'}}>
+                        <thead><tr>{[...(editing?['Ürün/Hizmet','Miktar','Birim','Birim Fiyat','KDV%','Toplam','']:['Ürün/Hizmet','Miktar','Birim','Birim Fiyat','KDV%','Toplam'])].map(h=><th key={h||'act'} style={TH}>{h}</th>)}</tr></thead>
+                        <tbody>
+                          {editing ? editItems.map((item,i)=>(
+                            <tr key={i}>
+                              <td style={TD}><input value={item.description||''} onChange={e=>updateEditItem(i,'description',e.target.value)} style={{background:C.surfaceAlt,color:C.text,border:`1px solid ${C.border}`,borderRadius:4,padding:'3px 6px',width:'100%',fontFamily:"'DM Mono',monospace",fontSize:12,boxSizing:'border-box'}}/></td>
+                              <td style={TD}><input type="number" value={item.quantity??''} onChange={e=>updateEditItem(i,'quantity',e.target.value)} style={{background:C.surfaceAlt,color:C.text,border:`1px solid ${C.border}`,borderRadius:4,padding:'3px 6px',width:65,fontFamily:"'DM Mono',monospace",fontSize:12,textAlign:'right'}} step="any"/></td>
+                              <td style={TD}><input value={item.unit||''} onChange={e=>updateEditItem(i,'unit',e.target.value)} style={{background:C.surfaceAlt,color:C.text,border:`1px solid ${C.border}`,borderRadius:4,padding:'3px 6px',width:55,fontFamily:"'DM Mono',monospace",fontSize:12}}/></td>
+                              <td style={TD}><input type="number" value={item.unit_price??''} onChange={e=>updateEditItem(i,'unit_price',e.target.value)} style={{background:C.surfaceAlt,color:C.text,border:`1px solid ${C.border}`,borderRadius:4,padding:'3px 6px',width:80,fontFamily:"'DM Mono',monospace",fontSize:12,textAlign:'right'}} step="any"/></td>
+                              <td style={TD}><input type="number" value={item.vat_rate??''} onChange={e=>updateEditItem(i,'vat_rate',e.target.value)} style={{background:C.surfaceAlt,color:C.text,border:`1px solid ${C.border}`,borderRadius:4,padding:'3px 6px',width:50,fontFamily:"'DM Mono',monospace",fontSize:12,textAlign:'right'}} step="any"/></td>
+                              <td style={{...TD,color:C.accent,fontWeight:500}}>{fmt(item.line_total)}</td>
+                              <td style={TD}><button onClick={()=>removeEditItem(i)} style={{background:'none',border:'none',color:C.error,cursor:'pointer',fontSize:16,padding:0,lineHeight:1}}>×</button></td>
+                            </tr>
+                          )) : (selected.items||[]).map((item,i)=>(
+                            <tr key={i}><td style={{...TD,color:C.text,fontWeight:500}}>{item.description||'—'}</td><td style={{...TD,color:C.textMuted}}>{item.quantity??''}</td><td style={{...TD,color:C.textMuted}}>{item.unit||''}</td><td style={TD}>{fmt(item.unit_price)}</td><td style={{...TD,color:C.textMuted}}>%{item.vat_rate??''}</td><td style={{...TD,color:C.accent,fontWeight:500}}>{fmt(item.line_total)}</td></tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {editing&&(
+                        <div style={{padding:'8px 12px',borderTop:`1px solid ${C.border}`}}>
+                          <button onClick={addEditItem} style={{background:'transparent',color:C.accent,border:`1px dashed ${C.accent}40`,borderRadius:5,padding:'5px 14px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12,width:'100%'}}>+ Kalem Ekle</button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
