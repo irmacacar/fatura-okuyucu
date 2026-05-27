@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from './supabase'
 import Login from './Login'
+import Countup from './Countup'
 
 const C = {
   bg:'#0f0f0f', surface:'#1a1a1a', surfaceAlt:'#212121',
@@ -601,6 +602,7 @@ export default function App() {
           {key:'urunler',  label:'Ürünler',  n:products.length},
           {key:'vadeler',  label:'Vadeler',  n:dueInv.length,badge:dueBadge},
           {key:'odendi',   label:'Ödendi',   n:paidInv.length},
+          {key:'sayac',    label:'Sayaç'},
         ].map(t=>(
           <button key={t.key} onClick={()=>setTab(t.key)} style={{background:'none',border:'none',cursor:'pointer',padding:'13px 14px 11px',fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:500,color:tab===t.key?C.text:C.textMuted,borderBottom:tab===t.key?`2px solid ${C.accent}`:'2px solid transparent',display:'flex',alignItems:'center',gap:5,transition:'color 0.15s'}}>
             {t.label}<span style={{fontSize:11,color:tab===t.key?C.accentDim:C.textDim}}>{t.n}</span>
@@ -965,6 +967,9 @@ export default function App() {
             )}
           </div>
         )}
+
+        {/* ═══ SAYAÇ ═══ */}
+        {tab==='sayac'&&<Countup/>}
       </div>
 
       {/* LIGHTBOX */}
