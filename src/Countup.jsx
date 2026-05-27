@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 
-const TARGET_MS = 9900
+const TARGET_MS = 9810
 
 const C = {
   bg:'#0f0f0f', surface:'#1a1a1a', surfaceAlt:'#212121',
@@ -74,7 +74,7 @@ export default function Countup() {
 
         <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:18}}>
           <span style={{fontSize:58,fontWeight:500,color:C.accent,fontVariantNumeric:'tabular-nums',lineHeight:1}}>{seconds}</span>
-          <span style={{color:C.textMuted,fontSize:16,fontVariantNumeric:'tabular-nums'}}>/ 9.900 s</span>
+          <span style={{color:C.textMuted,fontSize:16,fontVariantNumeric:'tabular-nums'}}>/ 9.810 s</span>
         </div>
 
         <div style={{position:'relative',height:14,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:7,overflow:'hidden',marginBottom:22}}>
